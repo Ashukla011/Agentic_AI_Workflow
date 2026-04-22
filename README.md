@@ -99,11 +99,6 @@ AgentFlow is a cutting-edge platform designed to orchestrate complex AI workflow
 - `supabase/`: Supabase configuration files
 - `styles/`: Global CSS and Tailwind configuration
 
----
 
-## 📝 License
 
-Distributed under the MIT License. See `ATTRIBUTIONS.md` for third-party library details.
-
----
 
