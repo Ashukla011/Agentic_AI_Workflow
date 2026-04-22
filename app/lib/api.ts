@@ -110,7 +110,7 @@ processesAPI.create = async (data: any) => {
   
   // Call the actual Execution Engine running locally!
   try {
-    const response = await fetch('http://localhost:3001/api/execute', {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflow, agent, taskInput })
@@ -134,7 +134,7 @@ processesAPI.create = async (data: any) => {
     }
   } catch (error: any) {
     console.error('Execution Engine Error:', error);
-    process.output = `Could not reach execution engine: ${error.message}\nMake sure http://localhost:3001 is running!`;
+    process.output = `Could not reach execution engine: ${error.message}\nMake sure sever is running!`;
     process.status = 'failed';
   }
   
