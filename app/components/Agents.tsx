@@ -79,7 +79,7 @@ export function Agents() {
   const [newAgent, setNewAgent] = useState({
     name: '',
     type: '',
-    model: '',
+    model: 'gemini-1.5-pro',
     description: ''
   });
 
@@ -153,7 +153,7 @@ export function Agents() {
         await loadAgents();
         toast.success('Agent created successfully');
         setIsDialogOpen(false);
-        setNewAgent({ name: '', type: '', model: '', description: '' });
+        setNewAgent({ name: '', type: '', model: 'gemini-1.5-pro', description: '' });
       }
     } catch (error) {
       console.error('Error creating agent:', error);
@@ -214,10 +214,13 @@ export function Agents() {
                     <SelectValue placeholder="Select AI model" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
-                    <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
+                    <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
+                    <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
+                    <SelectItem value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite</SelectItem>
                     <SelectItem value="gemini-2.0-flash">Gemini 2.0 Flash</SelectItem>
-                    <SelectItem value="gemini-pro">Gemini Pro</SelectItem>
+                    <SelectItem value="gemini-2.0-flash-001">Gemini 2.0 Flash 001</SelectItem>
+                    <SelectItem value="gemini-2.0-flash-lite-001">Gemini 2.0 Flash-Lite 001</SelectItem>
+                    <SelectItem value="gemini-2.0-flash-lite">Gemini 2.0 Flash-Lite</SelectItem>
                     <SelectItem value="Custom Model">Custom Model</SelectItem>
                   </SelectContent>
                 </Select>

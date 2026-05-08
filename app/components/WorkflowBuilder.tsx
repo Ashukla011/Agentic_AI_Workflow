@@ -18,13 +18,17 @@ import {
   GitBranch,
   Zap,
   CheckCircle,
-  XCircle
+  XCircle,
+  Upload,
+  File,
+  X
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { workflowsAPI, agentsAPI, processesAPI } from "../lib/api";
 
 interface WorkflowNode {
@@ -185,6 +189,133 @@ export function WorkflowBuilder() {
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const [taskInput, setTaskInput] = useState("");
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [parsedFileData, setParsedFileData] = useState<string>("");
+  const [inputMode, setInputMode] = useState<"text" | "file" | "both">("text");
+
+  // File parsing functions
+  const parseCSV = (content: string): string => {
+    const lines = content.split('\n').filter(line => line.trim());
+    if (lines.length === 0) return '';
+
+    const headers = lines[0].split(',').map(h => h.trim());
+    const rows = lines.slice(1).map(line => line.split(',').map(cell => cell.trim()));
+
+    let result = `CSV Data Analysis:\n`;
+    result += `Headers: ${headers.join(', ')}\n`;
+    result += `Total Rows: ${rows.length}\n\n`;
+
+    // Show first few rows as sample
+    result += `Sample Data:\n`;
+    rows.slice(0, 5).forEach((row, i) => {
+      result += `Row ${i + 1}: ${row.join(' | ')}\n`;
+    });
+
+    if (rows.length > 5) {
+      result += `... and ${rows.length - 5} more rows\n`;
+    }
+
+    return result;
+  };
+
+  const parseJSON = (content: string): string => {
+    try {
+      const data = JSON.parse(content);
+      let result = `JSON Data Analysis:\n`;
+
+      if (Array.isArray(data)) {
+        result += `Type: Array with ${data.length} items\n`;
+        if (data.length > 0) {
+          result += `Sample Item Structure: ${JSON.stringify(data[0], null, 2)}\n`;
+        }
+      } else if (typeof data === 'object') {
+        const keys = Object.keys(data);
+        result += `Type: Object with ${keys.length} properties\n`;
+        result += `Properties: ${keys.join(', ')}\n`;
+        result += `Sample Data: ${JSON.stringify(data, null, 2)}\n`;
+      }
+
+      return result;
+    } catch (e) {
+      return `Invalid JSON: ${content}`;
+    }
+  };
+
+  const parseSQL = (content: string): string => {
+    const lines = content.split('\n').filter(line => line.trim());
+    let result = `SQL Data Analysis:\n`;
+    result += `Total Lines: ${lines.length}\n\n`;
+
+    // Extract table names, columns, etc.
+    const createTableMatches = content.match(/CREATE TABLE\s+(\w+)/gi);
+    if (createTableMatches) {
+      result += `Tables Found: ${createTableMatches.map(match => match.replace(/CREATE TABLE\s+/i, '')).join(', ')}\n`;
+    }
+
+    const insertMatches = content.match(/INSERT INTO\s+(\w+)/gi);
+    if (insertMatches) {
+      result += `Insert Operations: ${insertMatches.length}\n`;
+    }
+
+    const selectMatches = content.match(/SELECT\s+.*FROM\s+(\w+)/gi);
+    if (selectMatches) {
+      result += `Select Queries: ${selectMatches.length}\n`;
+    }
+
+    result += `\nSQL Content Preview:\n${content.substring(0, 500)}${content.length > 500 ? '...' : ''}\n`;
+
+    return result;
+  };
+
+  const parseFile = async (file: File): Promise<string> => {
+    const content = await file.text();
+    const extension = file.name.split('.').pop()?.toLowerCase();
+
+    switch (extension) {
+      case 'csv':
+        return parseCSV(content);
+      case 'json':
+        return parseJSON(content);
+      case 'sql':
+        return parseSQL(content);
+      default:
+        // For other file types, just return the content
+        return `File: ${file.name}\nContent:\n${content}`;
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setUploadedFiles(files);
+    setInputMode(files.length > 0 ? (taskInput ? "both" : "file") : (taskInput ? "text" : "text"));
+
+    try {
+      const parsedContents = await Promise.all(files.map(parseFile));
+      const combinedData = parsedContents.join('\n\n---\n\n');
+      setParsedFileData(combinedData);
+      toast.success(`Parsed ${files.length} file(s) successfully`);
+    } catch (error) {
+      toast.error('Failed to parse uploaded files');
+      console.error('File parsing error:', error);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    const newFiles = uploadedFiles.filter((_, i) => i !== index);
+    setUploadedFiles(newFiles);
+
+    if (newFiles.length === 0) {
+      setParsedFileData("");
+      setInputMode(taskInput ? "text" : "text");
+    } else {
+      // Re-parse remaining files
+      Promise.all(newFiles.map(parseFile)).then(contents => {
+        setParsedFileData(contents.join('\n\n---\n\n'));
+      });
+    }
+  };
 
   const addNode = (nodeType: any, x: number, y: number) => {
     const newNode: WorkflowNode = {
@@ -273,10 +404,15 @@ export function WorkflowBuilder() {
       
       if (wfResponse.success && wfResponse.workflow) {
         console.log('[DEBUG] Calling processesAPI.create...');
+        const combinedInput = [
+          taskInput,
+          parsedFileData
+        ].filter(Boolean).join('\n\n--- DATA SEPARATOR ---\n\n');
+
         const processResponse = await processesAPI.create({
           workflowId: wfResponse.workflow.id,
           agentId: selectedAgentId,
-          taskInput
+          taskInput: combinedInput || "Please execute the workflow with available data."
         });
         
         console.log('[DEBUG] processesAPI.create returned:', processResponse);
@@ -285,6 +421,9 @@ export function WorkflowBuilder() {
           setIsRunDialogOpen(false);
           setSelectedAgentId("");
           setTaskInput("");
+          setUploadedFiles([]);
+          setParsedFileData("");
+          setInputMode("text");
         } else {
           console.error('[DEBUG] processResponse evaluated to false or missing success:', processResponse);
           toast.error('Execution returned an unsuccessful state.');
@@ -428,19 +567,114 @@ export function WorkflowBuilder() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="taskInput">Task Input / Data (Optional)</Label>
-                <Textarea 
-                  id="taskInput" 
-                  placeholder="Paste the text or data you want the AI to process..."
-                  value={taskInput}
-                  onChange={(e) => setTaskInput(e.target.value)}
-                  className="min-h-[200px] max-h-96 resize-vertical"
-                />
+
+              <div className="space-y-4">
+                <Label>Input Data</Label>
+                <Tabs value={inputMode} onValueChange={(value) => setInputMode(value as "text" | "file" | "both")}>
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="text">Text Input</TabsTrigger>
+                    <TabsTrigger value="file">File Upload</TabsTrigger>
+                    <TabsTrigger value="both">Both</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="text" className="space-y-2">
+                    <Textarea
+                      placeholder="Paste the text or data you want the AI to process..."
+                      value={taskInput}
+                      onChange={(e) => setTaskInput(e.target.value)}
+                      className="min-h-[200px] max-h-96 resize-vertical"
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="file" className="space-y-2">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                      <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-600 mb-2">Upload data files (CSV, JSON, SQL, TXT, etc.)</p>
+                      <Input
+                        type="file"
+                        multiple
+                        accept=".csv,.json,.sql,.txt,.xml,.xlsx,.xls"
+                        onChange={handleFileUpload}
+                        className="max-w-xs mx-auto"
+                      />
+                    </div>
+                    {uploadedFiles.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Uploaded Files:</p>
+                        {uploadedFiles.map((file, index) => (
+                          <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                            <File className="w-4 h-4 text-blue-500" />
+                            <span className="text-sm flex-1">{file.name} ({(file.size / 1024).toFixed(1)} KB)</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeFile(index)}
+                              className="h-6 w-6 p-0"
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="both" className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Text Input</Label>
+                      <Textarea
+                        placeholder="Enter additional text or instructions..."
+                        value={taskInput}
+                        onChange={(e) => setTaskInput(e.target.value)}
+                        className="min-h-[120px] resize-vertical"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">File Upload</Label>
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+                        <Upload className="w-6 h-6 text-gray-400 mx-auto mb-2" />
+                        <p className="text-xs text-gray-600 mb-2">Upload data files</p>
+                        <Input
+                          type="file"
+                          multiple
+                          accept=".csv,.json,.sql,.txt,.xml,.xlsx,.xls"
+                          onChange={handleFileUpload}
+                          className="max-w-xs mx-auto text-xs"
+                        />
+                      </div>
+                      {uploadedFiles.length > 0 && (
+                        <div className="space-y-1">
+                          {uploadedFiles.map((file, index) => (
+                            <div key={index} className="flex items-center gap-2 p-1.5 bg-gray-50 rounded text-xs">
+                              <File className="w-3 h-3 text-blue-500" />
+                              <span className="flex-1 truncate">{file.name}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeFile(index)}
+                                className="h-4 w-4 p-0"
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </div>
             </div>
             <div className="flex justify-end gap-3 pt-4 border-t">
-              <Button variant="outline" onClick={() => setIsRunDialogOpen(false)} disabled={isExecuting}>Cancel</Button>
+              <Button variant="outline" onClick={() => {
+                setIsRunDialogOpen(false);
+                setSelectedAgentId("");
+                setTaskInput("");
+                setUploadedFiles([]);
+                setParsedFileData("");
+                setInputMode("text");
+              }} disabled={isExecuting}>Cancel</Button>
               <Button onClick={confirmRun} disabled={isExecuting}>
                 {isExecuting ? 'Running AI Engine...' : 'Start Execution'}
               </Button>
