@@ -53,61 +53,116 @@ app.post("/api/execute", async (req, res) => {
     if (aiNode) {
       console.log(`[Processing AI Agent Step] Persona:
          ${agent.type}`);
-      const systemPrompt = `You are a helpful AI agent
-       named ${agent.name}. Your role is:
-       ${agent.description}. Provide a professional, 
-       concise response to the user's workflow task.`;
+      const systemPrompt = `You are a professional AI analyst and agent named ${agent.name}. 
+Your role is: ${agent.description}
+
+RESPONSE GUIDELINES:
+- Be direct and professional (avoid "has been received", "provided", "processed successfully")
+- Keep responses compact: 1-3 lines maximum
+- Use action verbs: analyzed, synced, imported, validated, completed, insights generated
+- Structure responses as: [Status] → [What happened with context] → [Business insight/metric]
+- Include specific business metrics and context from the data
+- Add business impact details (categories, channels, totals, trends)
+
+Example format:
+"Analysis complete. Processed 5 sales transactions across 4 product categories with multiple payment methods. Electronics showed 25% growth."`;
       const userPrompt = taskInput
-        ? `Task Input Data:\n${taskInput}`
+        ? `ANALYZE THIS DATA:\n${taskInput}\n\nRespond in format: [Status]. [What you found with specifics and business context]. [Key insight or metric].\nBe concise, professional, and data-driven.`
         : `Please execute your primary workflow task 
         based on your configured persona.`;
 
       if (gemini) {
         // Real Gemini API Execution
-        let modelName = agent.model || "gemini-1.5-flash";
-        // Map friendly names to actual model IDs (use
-        //  models available in current API)
+        const requestedModel = (agent.model || "gemini-2.5-pro").trim();
         const modelMap = {
-          "gemini-1.5-flash": "gemini-1.5-flash",
-          "gemini-1.5-pro": "gemini-1.5-pro",
+          "gemini-1.5-flash": "gemini-2.5-flash",
+          "gemini-1.5-pro": "gemini-2.5-pro",
           "gemini-2.0-flash": "gemini-2.0-flash",
-          "gemini-pro": "gemini-1.5-flash", 
-          // Map
-          //  legacy name to current stable
-          "Gemini 1.5 Flash": "gemini-1.5-flash",
-          "Gemini 1.5 Pro": "gemini-1.5-pro",
+          "gemini-2.0-flash-001": "gemini-2.0-flash-001",
+          "gemini-2.0-flash-lite": "gemini-2.0-flash-lite",
+          "gemini-2.0-flash-lite-001": "gemini-2.0-flash-lite-001",
+          "gemini-2.5-flash": "gemini-2.5-flash",
+          "gemini-2.5-pro": "gemini-2.5-pro",
+          "gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
+          "gemini-pro": "gemini-2.5-pro",
+          "Custom Model": "gemini-2.5-pro",
+          // Legacy labels
+          "Gemini 1.5 Flash": "gemini-2.5-flash",
+          "Gemini 1.5 Pro": "gemini-2.5-pro",
           "Gemini 2.0 Flash": "gemini-2.0-flash",
-          "Gemini Pro": "gemini-1.5-flash",
-          // Map alternative model names to Gemini equivalents
-          "GPT-4": "gemini-1.5-flash",
-          "GPT-3.5": "gemini-1.5-flash",
-          "Claude 3": "gemini-1.5-flash",
-          "Claude 2": "gemini-1.5-flash",
-          Claude: "gemini-1.5-flash",
+          "Gemini Pro": "gemini-2.5-pro",
+          // Alternative labels
+          "GPT-4": "gemini-2.5-pro",
+          "GPT-3.5": "gemini-2.5-pro",
+          "Claude 3": "gemini-2.5-pro",
+          "Claude 2": "gemini-2.5-pro",
+          Claude: "gemini-2.5-pro",
         };
-        console.log(
-          `[Agent Config] Model requested: "${agent.model || "default"}"`,
-        );
-        modelName = modelMap[modelName] || "gemini-1.5-flash";
-        console.log(`[Gemini Call] Using mapped model: ${modelName}`);
-        try {
-          const model = gemini.getGenerativeModel({ model: modelName });
-          const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
-          const result = await model.generateContent(combinedPrompt);
-          const response = await result.response;
-          finalOutput = response.text();
-        } catch (apiError) {
+
+        const knownModels = [
+          "gemini-2.5-pro",
+          "gemini-2.5-flash",
+          "gemini-2.5-flash-lite",
+          "gemini-2.0-flash",
+          "gemini-2.0-flash-001",
+          "gemini-2.0-flash-lite-001",
+          "gemini-2.0-flash-lite",
+        ];
+
+        const primaryModel = modelMap[requestedModel] || requestedModel || "gemini-2.5-pro";
+        const candidateModels = [
+          primaryModel,
+          ...knownModels.filter((m) => m !== primaryModel),
+        ];
+
+        console.log(`[Agent Config] Model requested: "${requestedModel}"`);
+        console.log(`[Gemini Call] Candidate models: ${candidateModels.join(', ')}`);
+
+        const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
+        let usedModel = primaryModel;
+        let lastError = null;
+
+        for (const candidate of candidateModels) {
+          for (const apiVersion of ["v1", "v1beta"]) {
+            try {
+              const model = gemini.getGenerativeModel({ model: candidate });
+              console.log(`[Gemini Call] Trying model: ${candidate} on API version: ${apiVersion}`);
+              const result = await model.generateContent(combinedPrompt, { apiVersion });
+              const response = await result.response;
+              finalOutput = response.text();
+              usedModel = candidate;
+              console.log(`[Gemini Success] Model ${candidate} returned a response on ${apiVersion}.`);
+              break;
+            } catch (apiError) {
+              lastError = apiError;
+              console.warn("[Gemini API Model Failure]", {
+                message: apiError.message,
+                model: candidate,
+                apiVersion,
+                statusCode: apiError.status,
+              });
+
+              const shouldFallback =
+                apiError.status === 404 ||
+                /not found|unsupported|not supported/i.test(apiError.message);
+              if (!shouldFallback) {
+                break;
+              }
+
+              console.log(`[Gemini Call] Model ${candidate} unsupported on ${apiVersion}, trying next version/fallback...`);
+            }
+          }
+          if (finalOutput) break;
+        }
+
+        if (!finalOutput) {
           console.error("[Gemini API Error Details]", {
-            message: apiError.message,
-            model: modelName,
-            statusCode: apiError.status,
+            message: lastError?.message || "Unknown error",
+            model: usedModel,
+            statusCode: lastError?.status,
           });
-          // Fallback to simulation mode if API fails
           await delay(2000);
-          finalOutput = `[FALLBACK MODE]\n${apiError.message}\n\nThe
-           Gemini API had an issue. Please check:\n1. Your API key is valid\n2. 
-           The model name is supported\n3. Your network connection\n\nFallback Response: 
-           As ${agent.name}, your workflow has been queued for processing.`;
+          finalOutput = `[FALLBACK MODE]\n${lastError?.message || "Gemini API had an unknown error."}\n\nThe Gemini API had an issue. Please check:\n1. Your API key is valid\n2. The model name is supported\n3. Your network connection\n\nFallback Response: As ${agent.name}, your workflow has been queued for processing.`;
         }
       } else {
         // Simulation Mode execution
